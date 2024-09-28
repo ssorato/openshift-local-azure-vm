@@ -1,0 +1,17 @@
+[Unit]
+Description=OpenShift Local
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+ExecStart=/usr/local/bin/crc start
+ExecStop=/usr/local/bin/crc stop
+Type=oneshot
+RemainAfterExit=yes
+TimeoutSec=1200
+User={{ ansible_user }}
+Restart=no
+RootDirectory={{ ansible_facts['user_dir'] }}
+
+[Install]
+WantedBy=multi-user.target

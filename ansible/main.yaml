@@ -1,0 +1,189 @@
+- name: Install OpenShift local
+  hosts: vms
+  tasks:
+
+    - name: Creating volume group
+      become: yes
+      community.general.lvg:
+        vg: vg_crc
+        pvs: /dev/disk/azure/scsi1/lun{{ lun }}
+        pvresize: true
+        state: present
+
+    - name: Creating logical volume
+      become: yes
+      community.general.lvol:
+        vg: vg_crc
+        lv:  lv-crc
+        size: 100%VG
+
+    - name: Create the filesystem
+      become: yes
+      community.general.filesystem:
+        fstype: xfs
+        dev: /dev/vg_crc/lv-crc
+
+    - name: Check if new home directory already exists
+      ansible.builtin.shell: |
+        [[ -d /home.old ]] && echo "yes" || echo "no"
+      register: home_old_exists
+
+    - name: Create new home directory
+      become: yes
+      ansible.builtin.shell: |
+        mv /home /home.old && mkdir /home
+      when: home_old_exists.stdout == "no"
+
+    - name: Mount home directory
+      become: yes
+      ansible.posix.mount:
+        path: /home
+        src: /dev/vg_crc/lv-crc
+        fstype: xfs
+        opts: defaults,user,exec
+        state: mounted
+      vars:
+        ansible_remote_tmp: /tmp/ansible_temp
+      when: home_old_exists.stdout == "no"
+
+    - name: Copy files to the new home directory
+      become: yes
+      ansible.builtin.shell: |
+        cp -a /home.old/* /home/
+      vars:
+        ansible_remote_tmp: /tmp/ansible_temp
+      when: home_old_exists.stdout == "no"
+
+    - name: Check if crc is already installed
+      ansible.builtin.shell: |
+        [[ -f /usr/local/bin/crc ]] && echo "yes" || echo "no"
+      register: crc_exists
+
+    - name: Copy installation file to the remote vm
+      ansible.builtin.copy:
+        src: crc-linux-amd64.tar.xz
+        dest: "{{ ansible_facts['user_dir'] }}/"
+
+    - name: Unarchive installation file
+      ansible.builtin.unarchive:
+        src: "{{ ansible_facts['user_dir'] }}/crc-linux-amd64.tar.xz"
+        dest: "{{ ansible_facts['user_dir'] }}/"
+        remote_src: yes
+      when: crc_exists.stdout == "no"
+
+    - name: Move crc to the know path
+      become: yes
+      ansible.builtin.shell: |
+        chown root:root {{ ansible_facts['user_dir'] }}/crc-linux-*-amd64/crc
+        mv {{ ansible_facts['user_dir'] }}/crc-linux-*-amd64/crc /usr/local/bin/
+      when: crc_exists.stdout == "no"
+
+    - name: Put SELinux in permissive mode
+      become: yes
+      ansible.posix.selinux:
+        policy: targeted
+        state: permissive
+
+    - name: Enable firewall
+      become: yes
+      ansible.builtin.shell: |
+        systemctl start firewalld
+        firewall-cmd --add-port=80/tcp --permanent
+        firewall-cmd --add-port=6443/tcp --permanent
+        firewall-cmd --add-port=443/tcp --permanent
+        systemctl restart firewalld
+        semanage port -a -t http_port_t -p tcp 6443
+
+    - name: Copy image pull secret file to the remote vm
+      ansible.builtin.copy:
+        src: pull-secret.txt
+        dest: "{{ ansible_facts['user_dir'] }}/"
+
+    - name: CRC setup
+      ansible.builtin.shell: |
+        crc config set consent-telemetry no
+        crc config set pull-secret-file {{ ansible_facts['user_dir'] }}/pull-secret.txt
+        crc config view
+        crc setup
+      register: crc_setup
+
+    - name: Show crc setup output
+      debug:
+        var: crc_setup.stdout
+
+    - name: Change hosts permissions
+      become: yes
+      ansible.builtin.file:
+        path: /etc/hosts
+        owner: root
+        group: sandbox
+        mode: '0664'
+
+    - name: CRC start
+      ansible.builtin.shell: |
+        crc start
+      register: crc_start
+
+    - name: Show crc start output
+      ansible.builtin.debug:
+        var: crc_start.stdout
+
+    - name: Get crc ip
+      ansible.builtin.shell: |
+        crc ip
+      register: crc_ip
+
+    - name: Install epel
+      become: yes
+      ansible.builtin.yum:
+        name:
+          - epel-release
+        state: present
+
+    - name: Install HAProxy and others packages
+      become: yes
+      ansible.builtin.yum:
+        name:
+          - haproxy
+          - htop
+          - git
+        state: present
+
+    - name: Configure HAProxy
+      become: yes
+      ansible.builtin.template:
+        src: haproxy.cfg.j2
+        dest: /etc/haproxy/haproxy.cfg
+        owner: root
+        group: root
+        mode: '0644'
+
+    - name: Restart service HAProxy
+      become: yes
+      ansible.builtin.systemd_service:
+        name: haproxy
+        state: restarted
+        enabled: true
+
+    - name: Set haproxy_connect_any flag
+      become: yes
+      ansible.posix.seboolean:
+        name: haproxy_connect_any
+        state: true
+        persistent: true
+
+    - name: Copy crc service definition to the remote vm
+      become: yes
+      ansible.builtin.template:
+        src: crc.service.j2
+        dest: /usr/lib/systemd/system/crc.service
+
+    # Review service
+    # - name: Start crc service
+    #   become: yes
+    #   ansible.builtin.systemd_service:
+    #     name: crc
+    #     state: started
+    #     enabled: true
+    #     daemon_reload: true
+
