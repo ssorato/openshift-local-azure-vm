@@ -68,9 +68,9 @@ variable "ssh_public_key_file" {
 }
 
 variable "vm_size" {
-  type = string
+  type        = string
   description = "The VM size"
-  default = "Standard_D4as_v5"
+  default     = "Standard_D4as_v5"
 }
 
 variable "home_disk_size_gb" {

@@ -160,7 +160,7 @@
 
     - name: Restart service HAProxy
       become: yes
-      ansible.builtin.systemd_service:
+      ansible.builtin.systemd:
         name: haproxy
         state: restarted
         enabled: true

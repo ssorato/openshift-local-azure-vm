@@ -16,7 +16,7 @@ locals {
       {
         name                    = "external-openshift"
         source_address_prefix   = "auto"
-        destination_port_ranges = ["80","443","6443"]
+        destination_port_ranges = ["80", "443", "6443"]
         priority                = 102
       }
     ], var.additional_inbound_access
